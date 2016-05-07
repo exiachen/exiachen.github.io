@@ -1,0 +1,19 @@
+# Setup
+title:        Chen's blog
+tagline:      Keep coding and carry on!
+baseurl:      ""
+paginate:     10
+
+# About/contact
+author:
+  name:       Chen Chen
+  url:        http://github.com/exiachen
+  email:      exiachen@hotmail.com
+  github:     http://github.com/exiachen
+
+# Gems
+gems:
+  - jekyll-paginate
+
+#Others
+markdown: redcarpet

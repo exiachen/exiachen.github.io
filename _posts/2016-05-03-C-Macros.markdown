@@ -1,0 +1,167 @@
+---
+layout: default
+title:  "C语言宏展开规则总结"
+categories: main
+---
+
+###C语言宏展开规则学习
+
+***
+####简单规则
+
+* 每次宏展开的结果会被重复扫描，直到没有任何可展开的宏为止
+* 每展开一个宏，都会记住这次展开，在这个宏展开的结果及其后续展开中，不再对相同的宏做展开
+* 带参数的宏，先对参数做展开，除非宏定义体中包含#或##
+* 如果宏定义中带有参数，而代码中出现同样标识符时没有参数，不视为宏
+
+参考：
+[C宏展开的几个注意事项](http://www.cnblogs.com/aquastone/p/c-macro-expansion.html)
+***
+
+####GCC 官方文档总结
+#####Object-like Macros
+* An object-like macro is a simple identifier which will be replaced by a code fragment. It is called object-like because it looks like a data object in code that uses it. They are most commonly used to give symbolic names to numeric constants.
+* If the expansion of a macro contains its own name, either directly or via intermediate macros, it is not expanded again when the expansion is examined for more macros. This prevents infinite recursion. (对于宏展开过程中，如果宏定义中包含宏自身的名字，不做继续展开，避免无限递归展开)
+
+#####Function-like Macros
+* A function-like macro is only expanded if its name appears with a pair of parentheses after it.  
+
+        extern void foo(void);
+        #define foo() /* optimized inline version */
+        foo();
+        funcptr = foo;
+    
+(*Here the call to foo() will use the macro, but the function pointer will get the address of the real function.*) 
+ 
+* If you put **spaces** between the **macro name and the parentheses** in the macro definition, that does not define a function-like macro, it defines an object-like macro whose expansion happens to begin with a pair of parentheses.
+
+#####Macro Arguments
+* **All arguments to a macro are completely macro-expanded before they are substituted into the macro body.After substitution, the complete text is scanned again for macros to expand, including the arguments.**
+* can leave macro arguments empty; this is not an error to the preprocessor.
+* Macro parameters appearing inside string literals are not replaced by their corresponding actual arguments.  
+
+        #define foo(x) x, "x"
+        foo(bar)        ==> bar, "x"
+    
+
+#####Stringification
+* When a macro parameter is used with a leading ‘#’, the preprocessor replaces it with the literal text of the actual argument, converted to a string constant. Unlike normal parameter replacement, the argument is not macro-expanded first. This is called *Stringification*.
+* 如果需要字符串化的参数中包含双引号，preprocessor会自动在双引号之前加入反斜杠。  
+
+        p = "foo\n"; ==> "p = \"foo\\n\";"
+* There is no way to convert a macro argument into a character constant.
+
+
+#####Concatenation
+* two tokens that don't together form a valid token cannot be pasted together.（使用 ## 连接的两个符号如果连接后不是一个合法的字符，则不能连接在一起）
+* If either of the tokens next to an ‘##’ is a parameter name, it is replaced by its actual argument before ‘##’ executes. As with stringification, the actual argument is not macro-expanded first.（## 如果连接宏的参数，则参数会在连接前被实参替换，且实参此时不会先进行宏展开）
+
+#####Variadic Macros
+    #define eprintf(...) fprintf (stderr, __VA_ARGS__)
+    #define eprintf(format, ...) fprintf (stderr, format, ##__VA_ARGS__)
+    #define eprintf(format, args...) fprintf (stderr, format , ##args)
+
+#####Predefined Macros
+* Standard Predefined Macros 
+
+        __FILE__, __LINE__, __DATE__, __cplusplus...
+    [*detail*](https://gcc.gnu.org/onlinedocs/cpp/Standard-Predefined-Macros.html#Standard-Predefined-Macros)
+* Common Predefined Macros
+
+        __GNUC__, __GNUG__...
+    [*detail*](https://gcc.gnu.org/onlinedocs/cpp/Common-Predefined-Macros.html#Common-Predefined-Macros)
+* System-specific Predefined Macros
+* C++ Named Operators
+
+        Named Operator  Punctuator 
+        and             && 
+        and_eq          &= 
+        bitand          & 
+        bitor           | 
+        compl           ~ 
+        not             ! 
+        not_eq          != 
+        or              || 
+        or_eq           |= 
+        xor             ^ 
+        xor_eq          ^= 
+
+#####Undefining and Redefining Macros
+* undef takes a single argument, the name of the macro to undefine. You use the bare macro name, **even if the macro is function-like**.
+* If a macro is redefined with a definition that is not effectively the same as the old one, the preprocessor issues a warning and changes the macro to use the new definition.
+
+#####Macro Pitfalls
+* Misnesting，宏的定义不一定要有完整、匹配的括号：
+
+        #define strange(file) fprintf (file, "%s %d",
+        ...
+        strange(stderr) p, 35)
+        ==> fprintf (stderr, "%s %d", p, 35)
+**The ability to piece together a macro call can be useful, but the use of unbalanced open parentheses in a macro body is just confusing, and should be avoided.**
+
+* Operator Precedence Problems（符号优先级问题，给宏定义中的参数加上括号），Parentheses around the entire macro definition prevent such problems. 
+
+* Swallowing the Semicolon.（定义复杂的宏定义时，使用do{...} while(0)，防止使用宏时，最后多加一个分号）
+
+* Duplication of Side Effects.（如果宏的入参是函数调用，则在宏展开之后可能会调用函数多次，可能会有副作用）
+
+        #define min(X, Y)  ((X) < (Y) ? (X) : (Y))
+        next = min (x + y, foo (z));
+        next = ((x + y) < (foo (z)) ? (x + y) : (foo (z)));
+
+    应该定义为：  
+
+        #define min(X, Y)                \
+        ({ typeof (X) x_ = (X);          \
+        typeof (Y) y_ = (Y);          \
+        (x_ < y_) ? x_ : y_; })
+
+
+* Self-Referential Macros.（宏定义在展开过程中，针对自身只展开一次，直接或间接的再次使用自身宏，将不做继续展开）
+
+        #define x (4 + y)
+        #define y (2 * x)
+
+        x    ==> (4 + y)
+            ==> (4 + (2 * x))
+     
+        y    ==> (2 * x)
+            ==> (2 * (4 + y))
+
+* Argument Prescan. **Macro arguments are completely macro-expanded before they are substituted into a macro body, unless they are stringified（＃） or pasted（＃＃） with other tokens.** After substitution, the entire macro body, including the substituted arguments, is scanned again for macros to be expanded. The result is that the arguments are **scanned twice** to expand macro calls in them.
+* Argument Prescan的原因
+    * Nested calls to a macro.  
+            
+            f(f(1))
+        *上述宏展开的期望过程是先将作为参数的f(1)展开，然后将其结果作为参数再次展开。而如果没有Prescan，f(1)直接作为参数传入宏f，而在展开宏f过程中，由于不对自我引用的宏进行重复展开，所以导致f(1)不会被展开。*
+        
+    * Macros that call other macros that stringify or concatenate. **If an argument is stringified or concatenated, the prescan does not occur.**
+    
+    		#define AFTERX(x) X_ ## x
+    		#define XAFTERX(x) AFTERX(x)
+    		#define TABLESIZE 1024
+    		#define BUFSIZE TABLESIZE
+    		
+    		AFTERX(BUFSIZE) ==> X_BUFSIZE
+    		XAFTERX(BUFSIZE) ==> XAFTERX(1024) ==> AFTERX(1024) ==> X_1024
+    
+    * Macros used in arguments, whose expansions contain unshielded commas.
+    
+    		#define foo  a,b
+    		#define bar(x) lose(x)
+    		#define lose(x) (1 + (x))
+          
+      对于bar(foo)的展开，我们本期望是==> (1 + (foo)) ==> (1 + (a, b))，但由于prescan展开过程是
+            
+            bar(foo)
+            ==> bar(a, b)
+            ====> lose(a, b)
+            
+      但由于宏lose仅接受一个参数，所以会报错。修改方式：
+      
+            #define foo (a, b) 
+      
+
+
+
+参考：[Macros](https://gcc.gnu.org/onlinedocs/cpp/Macros.html)
