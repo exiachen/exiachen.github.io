@@ -1,7 +1,7 @@
 ---
 layout: default
 title:  "C语言宏展开规则总结"
-categories: main
+categories: C
 ---
 
 ###C语言宏展开规则学习
@@ -26,10 +26,12 @@ categories: main
 #####Function-like Macros
 * A function-like macro is only expanded if its name appears with a pair of parentheses after it.  
 
+{% highlight c %}
         extern void foo(void);
         #define foo() /* optimized inline version */
         foo();
         funcptr = foo;
+{% endhighlight %}
     
 (*Here the call to foo() will use the macro, but the function pointer will get the address of the real function.*) 
  
