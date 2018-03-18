@@ -1,0 +1,192 @@
+---
+layout: default
+title:  "Bit Order浅析"
+categories: C
+---
+
+### Bit Order 浅析
+
+
+
+​	字节序的问题平时都很清楚了，但单个字节内（或者C结构体位域内）的位序是怎样的，和大小端有没有关系，借此文纪录一下。
+
+​	先来看两个问题：
+
+1. 如下代码：
+
+   ```c
+   typedef struct _test {
+     unsigned char a: 2,
+                   b: 3,
+                   c: 3;
+   } test;
+
+   int main()
+   {
+       unsigned char aa = 0x79;
+       test *tp = (test *)(&aa);
+
+       printf("a = %d, b = %d, c = %d\n", tp->a, tp->b, tp->c);
+       return 0;
+   }
+   ```
+
+   结果是多少？
+
+   ​
+
+2. 看内核中tcphdr的定义：
+
+```c
+struct tcphdr {
+  __be16  source;
+  __be16  dest;
+  __be32  seq;
+  __be32  ack_seq;
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+  __u16 res1:4,
+    doff:4,
+    fin:1,
+    syn:1,
+    rst:1,
+    psh:1,
+    ack:1,
+    urg:1,
+    ece:1,
+    cwr:1;
+#elif defined(__BIG_ENDIAN_BITFIELD)
+  __u16 doff:4,
+    res1:4,
+    cwr:1,
+    ece:1,
+    urg:1,
+    ack:1,
+    psh:1,
+    rst:1,
+    syn:1,
+    fin:1;
+#else
+#error  "Adjust your <asm/byteorder.h> defines"
+#endif
+  __be16  window;
+  __sum16 check;
+  __be16  urg_ptr;
+};
+```
+
+其中对标记位 + 保留位 + 包头长度位，在大小端情况下为什么这样设计？
+
+
+
+先看第一个问题：
+
+```c
+typedef struct _test {
+  unsigned char a: 2,
+                b: 3,
+                c: 3;
+} test;
+
+int main()
+{
+    unsigned char aa = 0x79;
+    test *tp = (test *)(&aa);
+
+    printf("a = %d, b = %d, c = %d\n", tp->a, tp->b, tp->c);
+    return 0;
+}
+```
+
+
+
+在小端机上测试，答案是： `a = 1, b = 6, c = 3`，没有找到大端机，我们来分析一下小端机：
+
+首先`0x79`的二进制是`01111001`，在小端机上也按照**低地址存放低位**的原理，那么对于一个二进制数据，低比特位数据也就存放在低地址，那么`0x79`的二进制在内存中存放的方式如下所示（假设一个字节内，从低到高的地址分别用1-8表示）：
+
+|  地址  |  1   |  2   |  3   |  4   |  5   |  6   |  7   |  8   |
+| :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: |
+| bit  |  1   |  0   |  0   |  1   |  1   |  1   |  1   |  0   |
+
+所以 a 占据前两位，为`10`，b占据随后三位，为`011`，c占据最后三位，为`110`，但如果这样直接计算，与结果明显不符，原因在哪里？
+
+我的理解是这样的，求值的时候有问题，对于a，低地址是1，高地址是0，同时在小端机上，低位在低地址，高位在高地址，所以求值应该是 `0 * 2的1次方 + 1 * 2的0次方 = 1`，同理b和c分别是6和3。
+
+顺便看一眼，结构体位域的取值在汇编中是怎样实现的，我们将上述的代码生成汇编（mac os），代码如下：
+
+```assembly
+	.section	__TEXT,__text,regular,pure_instructions
+	.macosx_version_min 10, 13
+	.globl	_main
+	.p2align	4, 0x90
+_main:                                  ## @main
+## BB#0:
+	pushl	%ebp
+	movl	%esp, %ebp
+	pushl	%edi
+	pushl	%esi
+	subl	$32, %esp
+	calll	L0$pb
+L0$pb:
+	popl	%eax
+	leal	L_.str-L0$pb(%eax), %eax
+	leal	-13(%ebp), %ecx
+	movl	$0, -12(%ebp)
+	movb	$121, -13(%ebp)
+	movl	%ecx, -20(%ebp)
+	movl	-20(%ebp), %ecx
+	movb	(%ecx), %dl
+	andb	$3, %dl
+	movzbl	%dl, %ecx
+	movl	-20(%ebp), %esi
+	movb	(%esi), %dl
+	shrb	$2, %dl
+	andb	$7, %dl
+	movzbl	%dl, %esi
+	movl	-20(%ebp), %edi
+	movb	(%edi), %dl
+	shrb	$5, %dl
+	movzbl	%dl, %edi
+	movl	%eax, (%esp)
+	movl	%ecx, 4(%esp)
+	movl	%esi, 8(%esp)
+	movl	%edi, 12(%esp)
+	calll	_printf
+	xorl	%ecx, %ecx
+	movl	%eax, -24(%ebp)         ## 4-byte Spill
+	movl	%ecx, %eax
+	addl	$32, %esp
+	popl	%esi
+	popl	%edi
+	popl	%ebp
+	retl
+
+	.section	__TEXT,__cstring,cstring_literals
+L_.str:                                 ## @.str
+	.asciz	"a = %d, b = %d, c = %d\n"
+
+
+```
+
+
+
+关注到最后的printf压栈参数（看上去是按照从左到右的顺序压栈的，第一个是字符串地址），那么a的值就存在ecx中，我们关注一下ecx的计算过程，大概过程就是取aa的值与3（11）做与运算，看是在取低两位（这也就说明了在编译器实现中，**位域越靠前的值，越靠近低位**）；而b则是先将aa右移2位，然后与7（111）做与运算，最后的c直接是将aa右移5位。
+
+
+
+第二个问题，我们首先来看一下tcp头部的定义（只关注上述结构体中位域定义的部分）：
+
+| 4位首部长度 | 4位保留域 | cwr  | ece  | urg  | ack  | psh  | rst  | syn  | fin  |
+| :----: | :---: | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: |
+|   4    |   4   |  1   |  1   |  1   |  1   |  1   |  1   |  1   |  1   |
+
+对于大端机，内存中存储的方式与我们所读写的方式一致，所以在大端情况下，位域定义的位置与tcp真实头部的定义一致。但在小端机中，数据在内存中存储的位置是反的，例如网络上传输的数据是这样的：
+
+`1 1 0 0` `0 0 0 0` `0 0 1 1` `1 0 0 1`
+
+在小端机接受到后，在内存中是这样存储的：
+
+低地址	———> 	高地址
+
+`0 0 0 0 ` `0 0 1 1` `1 0 0 1` `1 1 0 0`
+
+所以第一个4位应该是保留位的值，第二个4位是首部长度（而且注意计算的时候，值是`1100`，从高地址开始算），然后后一个字节中同理，第一个bit是fin标志，最后一个是cwr标志。
