@@ -4,7 +4,7 @@ title:  "Linux Kernel中对变量益处问题的处理"
 categories: Linux Tcp
 ---
 
-### Linux Kernel中对变量益处问题的处理
+### Linux Kernel中对变量溢出问题的处理
 
 
 
